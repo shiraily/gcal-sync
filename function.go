@@ -1,10 +1,11 @@
-package main
+package gcal
 
 import (
 	"context"
 	"fmt"
 	"io/ioutil"
 	"log"
+	"net/http"
 	"regexp"
 	"time"
 
@@ -55,6 +56,19 @@ func NewCalendarService(ctx context.Context, jsonKey []byte) (*calendar.Service,
 }
 
 func main() {
+	OnWatch(nil, nil)
+}
+
+func OnWatch(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain")
+	w.WriteHeader(http.StatusBadRequest) // TODO OK
+	if _, err := w.Write([]byte("aaaa")); err != nil {
+		log.Fatal(err)
+		return
+	}
+}
+
+func Do() {
 	// envs
 	conf := getConf()
 

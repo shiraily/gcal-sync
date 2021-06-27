@@ -12,10 +12,11 @@
 *.out
 
 # Dependency directories (remove the comment below to include it)
-# vendor/
+vendor/
 
 # Env file
 /env.yaml
+/.env
 
 # Auth
 credentials.json
