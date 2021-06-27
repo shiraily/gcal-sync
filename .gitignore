@@ -16,3 +16,6 @@
 
 # Env file
 /env.yaml
+
+# Auth
+credentials.json
