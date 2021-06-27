@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"regexp"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -14,8 +15,19 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+const gcalTimeFormat = "2006-01-02T15:04:05-07:00"
+
 type conf struct {
-	srcId string `yaml:"CAL_ID_PRIVATE"`
+	ClientSecret string `yaml:"client_secret"`
+	SrcId        string `yaml:"cal_id_private"`
+	DestId       string `yaml:"cal_id_business"`
+	Rules        []rule `yaml:"rules"`
+}
+
+type rule struct {
+	Match       string `yaml:"match"`                  // "クリニック"
+	StartOffset int    `yaml:"start_offset,omitempty"` // "30" means minute
+	EndOffset   int    `yaml:"end_offset,omitempty"`
 }
 
 func getConf() *conf {
@@ -25,7 +37,6 @@ func getConf() *conf {
 	if err != nil {
 		log.Printf("yamlFile.Get err   #%v ", err)
 	}
-	println(len(yamlFile))
 	err = yaml.Unmarshal(yamlFile, &c)
 	if err != nil {
 		log.Fatalf("Unmarshal: %v", err)
@@ -34,32 +45,27 @@ func getConf() *conf {
 	return &c
 }
 
-func main() {
-	// envs
-	conf := getConf()
-	println(conf.srcId, "is id")
-
-	ctx := context.Background()
-	b, err := ioutil.ReadFile("credentials.json")
-	if err != nil {
-		log.Fatalf("Unable to read client secret file: %v", err)
-	}
-
-	// If modifying these scopes, delete your previously saved token.json.
-	config, err := google.JWTConfigFromJSON(b, calendar.CalendarReadonlyScope)
+func NewCalendarService(ctx context.Context, jsonKey []byte) (*calendar.Service, error) {
+	config, err := google.JWTConfigFromJSON(jsonKey, calendar.CalendarEventsScope)
 	if err != nil {
 		log.Fatalf("Unable to parse client secret file to config: %v", err)
 	}
-	// client := getClient(config)
 	client := config.Client(oauth2.NoContext)
+	return calendar.NewService(ctx, option.WithHTTPClient(client))
+}
 
-	srv, err := calendar.NewService(ctx, option.WithHTTPClient(client))
+func main() {
+	// envs
+	conf := getConf()
+
+	ctx := context.Background()
+	srv, err := NewCalendarService(ctx, []byte(conf.ClientSecret))
 	if err != nil {
 		log.Fatalf("Unable to retrieve Calendar client: %v", err)
 	}
 
 	t := time.Now().Format(time.RFC3339)
-	events, err := srv.Events.List(conf.srcId).ShowDeleted(false).
+	events, err := srv.Events.List(conf.SrcId).ShowDeleted(false).
 		SingleEvents(true).TimeMin(t).MaxResults(10).OrderBy("startTime").Do()
 	if err != nil {
 		log.Fatalf("Unable to retrieve next ten of the user's events: %v", err)
@@ -76,4 +82,39 @@ func main() {
 			fmt.Printf("%v (%v)\n", item.Summary, date)
 		}
 	}
+
+	evt := calendar.Event{
+		Summary: "ブロック",
+		Start:   events.Items[0].Start,
+		End:     events.Items[0].End,
+	}
+	if evt.Start.DateTime == "" { // 終日
+		return
+	}
+
+	start, _ := time.Parse(gcalTimeFormat, evt.Start.DateTime)
+	end, _ := time.Parse(gcalTimeFormat, evt.End.DateTime)
+	if start.Weekday() == time.Saturday ||
+		start.Weekday() == time.Sunday ||
+		end.Weekday() == time.Saturday ||
+		end.Weekday() == time.Sunday {
+		return
+	}
+
+	for _, rule := range conf.Rules {
+		if regexp.MustCompile(rule.Match).MatchString(events.Items[0].Summary) {
+			evt.Start = &calendar.EventDateTime{
+				DateTime: start.Add(time.Duration(rule.StartOffset) * time.Minute).Format(gcalTimeFormat),
+			}
+			evt.End = &calendar.EventDateTime{
+				DateTime: end.Add(time.Duration(rule.EndOffset) * time.Minute).Format(gcalTimeFormat),
+			}
+			break
+		}
+	}
+
+	if _, err := srv.Events.Insert(conf.DestId, &evt).Do(); err != nil {
+		log.Fatalf("failed to create, %s", err)
+	}
+	log.Printf("succeeded in creating event from: %s", evt.Id)
 }
