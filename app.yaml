@@ -1,0 +1,9 @@
+runtime: go115
+
+service: gcal-functions
+
+handlers:
+- url: /(.*\.html)$
+  static_files: static/\1
+- url: /.*
+  script: auto

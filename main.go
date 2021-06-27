@@ -1,4 +1,4 @@
-package gcal
+package main
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"os"
 	"regexp"
 	"time"
 
@@ -15,6 +16,21 @@ import (
 	"google.golang.org/api/option"
 	"gopkg.in/yaml.v2"
 )
+
+func main() {
+	http.HandleFunc("/gcal-functions", OnWatch)
+
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+		log.Printf("Defaulting to port %s", port)
+	}
+
+	log.Printf("Listening on port %s", port)
+	if err := http.ListenAndServe(":"+port, nil); err != nil {
+		log.Fatal(err)
+	}
+}
 
 const gcalTimeFormat = "2006-01-02T15:04:05-07:00"
 
@@ -55,20 +71,21 @@ func NewCalendarService(ctx context.Context, jsonKey []byte) (*calendar.Service,
 	return calendar.NewService(ctx, option.WithHTTPClient(client))
 }
 
-func main() {
-	OnWatch(nil, nil)
-}
-
 func OnWatch(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")
-	w.WriteHeader(http.StatusBadRequest) // TODO OK
-	if _, err := w.Write([]byte("aaaa")); err != nil {
+	calId := *Do()
+	if calId == "" {
+		w.WriteHeader(http.StatusInternalServerError)
+	} else {
+		w.WriteHeader(http.StatusOK)
+	}
+	if _, err := w.Write([]byte(calId)); err != nil {
 		log.Fatal(err)
 		return
 	}
 }
 
-func Do() {
+func Do() *string {
 	// envs
 	conf := getConf()
 
@@ -103,7 +120,7 @@ func Do() {
 		End:     events.Items[0].End,
 	}
 	if evt.Start.DateTime == "" { // 終日
-		return
+		return nil
 	}
 
 	start, _ := time.Parse(gcalTimeFormat, evt.Start.DateTime)
@@ -112,7 +129,7 @@ func Do() {
 		start.Weekday() == time.Sunday ||
 		end.Weekday() == time.Saturday ||
 		end.Weekday() == time.Sunday {
-		return
+		return nil
 	}
 
 	for _, rule := range conf.Rules {
@@ -131,4 +148,5 @@ func Do() {
 		log.Fatalf("failed to create, %s", err)
 	}
 	log.Printf("succeeded in creating event from: %s", evt.Id)
+	return &evt.Id
 }

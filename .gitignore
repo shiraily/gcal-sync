@@ -17,6 +17,7 @@ vendor/
 # Env file
 /env.yaml
 /.env
+static/
 
 # Auth
 credentials.json
