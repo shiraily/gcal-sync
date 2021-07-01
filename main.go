@@ -18,7 +18,7 @@ import (
 )
 
 func main() {
-	http.HandleFunc("/gcal-functions", OnWatch)
+	http.HandleFunc("/notify", OnWatch)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -35,6 +35,7 @@ func main() {
 const gcalTimeFormat = "2006-01-02T15:04:05-07:00"
 
 type conf struct {
+	Url          string `yaml:"url"` // webhook url
 	ClientSecret string `yaml:"client_secret"`
 	SrcId        string `yaml:"cal_id_private"`
 	DestId       string `yaml:"cal_id_business"`
@@ -73,7 +74,8 @@ func NewCalendarService(ctx context.Context, jsonKey []byte) (*calendar.Service,
 
 func OnWatch(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")
-	calId := *Do()
+	cli := NewClient()
+	calId := cli.Do()
 	if calId == "" {
 		w.WriteHeader(http.StatusInternalServerError)
 	} else {
@@ -85,18 +87,30 @@ func OnWatch(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func Do() *string {
+type Client struct {
+	conf *conf
+	srv  *calendar.Service
+}
+
+func NewClient() Client {
+	cli := &Client{}
 	// envs
-	conf := getConf()
+	cli.conf = getConf()
 
 	ctx := context.Background()
-	srv, err := NewCalendarService(ctx, []byte(conf.ClientSecret))
+	srv, err := NewCalendarService(ctx, []byte(cli.conf.ClientSecret))
 	if err != nil {
 		log.Fatalf("Unable to retrieve Calendar client: %v", err)
 	}
+	cli.srv = srv
+
+	return *cli
+}
+
+func (cli *Client) Do() string {
 
 	t := time.Now().Format(time.RFC3339)
-	events, err := srv.Events.List(conf.SrcId).ShowDeleted(false).
+	events, err := cli.srv.Events.List(cli.conf.SrcId).ShowDeleted(false).
 		SingleEvents(true).TimeMin(t).MaxResults(10).OrderBy("startTime").Do()
 	if err != nil {
 		log.Fatalf("Unable to retrieve next ten of the user's events: %v", err)
@@ -114,10 +128,17 @@ func Do() *string {
 		}
 	}
 
+	srcEvt := events.Items[0]
+
+	destEvt := cli.CreateEvent(srcEvt)
+	return *destEvt
+}
+
+func (cli *Client) CreateEvent(srcEvt *calendar.Event) *string {
 	evt := calendar.Event{
 		Summary: "ブロック",
-		Start:   events.Items[0].Start,
-		End:     events.Items[0].End,
+		Start:   srcEvt.Start,
+		End:     srcEvt.End,
 	}
 	if evt.Start.DateTime == "" { // 終日
 		return nil
@@ -132,8 +153,8 @@ func Do() *string {
 		return nil
 	}
 
-	for _, rule := range conf.Rules {
-		if regexp.MustCompile(rule.Match).MatchString(events.Items[0].Summary) {
+	for _, rule := range cli.conf.Rules {
+		if regexp.MustCompile(rule.Match).MatchString(srcEvt.Summary) {
 			evt.Start = &calendar.EventDateTime{
 				DateTime: start.Add(time.Duration(rule.StartOffset) * time.Minute).Format(gcalTimeFormat),
 			}
@@ -144,9 +165,10 @@ func Do() *string {
 		}
 	}
 
-	if _, err := srv.Events.Insert(conf.DestId, &evt).Do(); err != nil {
+	destEvt, err := cli.srv.Events.Insert(cli.conf.DestId, &evt).Do()
+	if err != nil {
 		log.Fatalf("failed to create, %s", err)
 	}
 	log.Printf("succeeded in creating event from: %s", evt.Id)
-	return &evt.Id
+	return &destEvt.Id
 }
