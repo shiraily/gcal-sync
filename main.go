@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"strings"
 	"time"
 
 	"cloud.google.com/go/firestore"
@@ -22,6 +23,7 @@ import (
 func main() {
 	http.HandleFunc("/notify", OnNotify)
 	http.HandleFunc("/watch", OnWatch)
+	http.HandleFunc("/stop", OnStop)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -70,17 +72,13 @@ func getConf() *conf {
 func NewCalendarService(ctx context.Context, jsonKey []byte) (*calendar.Service, error) {
 	config, err := google.JWTConfigFromJSON(jsonKey, calendar.CalendarEventsScope)
 	if err != nil {
-		log.Fatalf("Unable to parse client secret file to config: %v", err)
+		return nil, fmt.Errorf("parse client secret file to config: %s", err)
 	}
 	client := config.Client(ctx)
 	return calendar.NewService(ctx, option.WithHTTPClient(client))
 }
 
 func (cli *Client) NewFirestoreApp(jsonKey []byte) (*firestore.Client, error) {
-	/*config, err := google.JWTConfigFromJSON(jsonKey, calendar.CalendarEventsScope)
-	if err != nil {
-		return nil, err
-	}*/
 	app, err := firebase.NewApp(cli.ctx, &firebase.Config{ProjectID: cli.conf.Project}, option.WithCredentialsJSON(jsonKey))
 	if err != nil {
 		return nil, err
@@ -92,9 +90,8 @@ func OnNotify(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")
 	cli := NewClient()
 	defer cli.fsCli.Close()
-	log.Printf("request headers: %+v", r.Header["X-Goog-Resource-State"])
-	calId := cli.Do(r.Header["X-Goog-Resource-State"][0] == "exists")
-	if calId == "" {
+	calId, err := cli.Do(len(r.Header["X-Goog-Resource-State"]) > 0 && r.Header["X-Goog-Resource-State"][0] == "exists")
+	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 	} else {
 		w.WriteHeader(http.StatusOK)
@@ -120,7 +117,7 @@ func NewClient() Client {
 	cli.ctx = context.Background()
 	srv, err := NewCalendarService(cli.ctx, []byte(cli.conf.ClientSecret))
 	if err != nil {
-		log.Fatalf("Unable to retrieve Calendar client: %v", err)
+		log.Fatalf("Retrieve Calendar client: %s", err)
 	}
 	cli.calSrv = srv
 
@@ -132,92 +129,111 @@ func NewClient() Client {
 	return *cli
 }
 
-func (cli *Client) Do(hasSyncToken bool) string {
-	t := time.Now().Format(time.RFC3339)
-	call := cli.calSrv.Events.List(cli.conf.SrcId).ShowDeleted(false).
-		SingleEvents(true).TimeMin(t).MaxResults(10).OrderBy("startTime")
-
-	if !hasSyncToken {
-		// get token
+func (cli *Client) Do(existsSyncToken bool) (string, error) {
+	call := cli.calSrv.Events.List(cli.conf.SrcId)
+	if existsSyncToken {
+		// get token from firestore
 		doc, err := cli.fsCli.Collection("calendar").Doc("channel").Get(cli.ctx)
 		if err != nil {
-			log.Fatalf("sync token: %s", err)
+			return "", fmt.Errorf("sync token: %s", err)
 		}
-		nextToken, ok := doc.Data()["nextSyncToken"].(string)
-		log.Printf("sync result: %s %T", nextToken, ok)
+		nextToken, _ := doc.Data()["nextSyncToken"].(string)
 		call = call.SyncToken(nextToken)
+	} else {
+		t := time.Now().Format(time.RFC3339)
+		events, err := cli.calSrv.Events.List(cli.conf.SrcId).ShowDeleted(false).
+			SingleEvents(true).TimeMin(t).Do()
+		if err != nil {
+			return "", fmt.Errorf("get first token: %s", err)
+		}
+		call = call.SyncToken(events.NextSyncToken)
 	}
 
 	events, err := call.Do()
 	if err != nil {
-		log.Fatalf("Unable to retrieve next ten of the user's events: %v", err)
+		return "", fmt.Errorf("retrieve next events: %s", err)
 	}
 
 	// set token
-	result, err := cli.fsCli.Collection("calendar").Doc("channel").Set(cli.ctx, map[string]interface{}{
-		"nextSyncToken": events.NextSyncToken,
-	})
+	_, err = cli.fsCli.Collection("calendar").Doc("channel").Update(
+		cli.ctx,
+		[]firestore.Update{{Path: "nextSyncToken", Value: events.NextSyncToken}},
+	)
 	if err != nil {
-		log.Fatalf("sync token: %s", err)
+		return "", fmt.Errorf("sync token: %s", err)
 	}
-	log.Printf("sync result: %+v", result)
 
-	fmt.Println("Upcoming events:")
 	if len(events.Items) == 0 {
 		fmt.Println("No upcoming events found.")
-	} else {
-		for _, item := range events.Items {
-			date := item.Start.DateTime
-			if date == "" {
-				date = item.Start.Date
-			}
-			fmt.Printf("%v (%v)\n", item.Summary, date)
+		return "", nil
+	}
+	var ids []string
+	for _, item := range events.Items {
+		destEvtId, err := cli.SyncEvent(item)
+		if err != nil {
+			log.Fatalf("Skipped %s %s: %s", item.Id, item.Summary, err)
+		} else if destEvtId == nil {
+			log.Printf("Not target: %s", item.Summary)
+		} else {
+			ids = append(ids, *destEvtId)
 		}
 	}
-
-	srcEvt := events.Items[0]
-
-	destEvt := cli.CreateEvent(srcEvt)
-	return *destEvt
+	return strings.Join(ids, ", "), nil
 }
 
-func (cli *Client) CreateEvent(srcEvt *calendar.Event) *string {
+func (cli *Client) SyncEvent(srcEvt *calendar.Event) (*string, error) {
+	start, end := cli.getEventTime(srcEvt)
+	if start == "" {
+		return nil, nil
+	}
+
 	evt := calendar.Event{
 		Summary: "ブロック",
-		Start:   srcEvt.Start,
-		End:     srcEvt.End,
-	}
-	if evt.Start.DateTime == "" { // 終日
-		return nil
-	}
-
-	start, _ := time.Parse(gcalTimeFormat, evt.Start.DateTime)
-	end, _ := time.Parse(gcalTimeFormat, evt.End.DateTime)
-	if start.Weekday() == time.Saturday ||
-		start.Weekday() == time.Sunday ||
-		end.Weekday() == time.Saturday ||
-		end.Weekday() == time.Sunday {
-		return nil
-	}
-
-	for _, rule := range cli.conf.Rules {
-		if regexp.MustCompile(rule.Match).MatchString(srcEvt.Summary) {
-			evt.Start = &calendar.EventDateTime{
-				DateTime: start.Add(time.Duration(rule.StartOffset) * time.Minute).Format(gcalTimeFormat),
-			}
-			evt.End = &calendar.EventDateTime{
-				DateTime: end.Add(time.Duration(rule.EndOffset) * time.Minute).Format(gcalTimeFormat),
-			}
-			break
-		}
+		Start: &calendar.EventDateTime{
+			DateTime: start,
+		},
+		End: &calendar.EventDateTime{
+			DateTime: end,
+		},
 	}
 
 	destEvt, err := cli.calSrv.Events.Insert(cli.conf.DestId, &evt).Do()
 	if err != nil {
-		log.Fatalf("failed to create, %s", err)
+		return nil, fmt.Errorf("create: %w", err)
 	}
-	log.Printf("succeeded in creating event from: %s", evt.Id)
-	return &destEvt.Id
+	return &destEvt.Id, nil
+}
+
+func (cli *Client) getEventTime(srcEvt *calendar.Event) (string, string) {
+	if srcEvt.Status != "confirmed" { // キャンセル等
+		// TODO: キャンセルの場合は作成済みイベントを削除したい
+		return "", ""
+	}
+	if srcEvt.Start.DateTime == "" { // 終日
+		return "", ""
+	}
+
+	start, _ := time.Parse(gcalTimeFormat, srcEvt.Start.DateTime)
+	end, _ := time.Parse(gcalTimeFormat, srcEvt.End.DateTime)
+	if start.Weekday() == time.Saturday ||
+		start.Weekday() == time.Sunday ||
+		end.Weekday() == time.Saturday ||
+		end.Weekday() == time.Sunday {
+		return "", ""
+	}
+
+	if srcEvt.Location != "" {
+		return start.Add(time.Duration(-30) * (time.Minute)).Format(gcalTimeFormat),
+			end.Add(time.Duration(30) * (time.Minute)).Format(gcalTimeFormat)
+	} else {
+		for _, rule := range cli.conf.Rules {
+			if regexp.MustCompile(rule.Match).MatchString(srcEvt.Summary) {
+				return start.Add(time.Duration(rule.StartOffset) * time.Minute).Format(gcalTimeFormat),
+					end.Add(time.Duration(rule.EndOffset) * time.Minute).Format(gcalTimeFormat)
+			}
+		}
+	}
+	return srcEvt.Start.DateTime, srcEvt.End.DateTime
 }
 
 func OnWatch(w http.ResponseWriter, r *http.Request) {
@@ -242,7 +258,7 @@ func (cli *Client) StartWatch() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// may be about 1 month later
+	// set expiration but forced to about 1 month later
 	exp, _ := time.Parse(gcalTimeFormat, "2030-01-01T00:00:00+09:00")
 	ch := calendar.Channel{
 		Id:         id.String(),
@@ -255,14 +271,42 @@ func (cli *Client) StartWatch() (string, error) {
 		return "", err
 	}
 	rid := res.ResourceId
-	log.Printf("Create Resource: %+v", res)
-	result, err := cli.fsCli.Collection("calendar").Doc("channel").Set(cli.ctx, map[string]interface{}{
+	_, err = cli.fsCli.Collection("calendar").Doc("channel").Set(cli.ctx, map[string]interface{}{
+		"channelId":  id.String(),
 		"resourceId": res.ResourceId,
 		"exp":        res.Expiration,
 	})
 	if err != nil {
 		return "", err
 	}
-	log.Printf("write to firestore: %+v", result)
 	return rid, nil
+}
+
+func OnStop(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain")
+	cli := NewClient()
+	defer cli.fsCli.Close()
+	channelId, err := cli.StopWatch(r.FormValue("channel-id"), r.FormValue("resource-id"))
+	if err != nil {
+		log.Fatalf("Start watch: %s", err)
+		w.WriteHeader(http.StatusInternalServerError)
+	} else {
+		w.WriteHeader(http.StatusOK)
+	}
+	if _, err := w.Write([]byte(channelId)); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func (cli *Client) StopWatch(channelId string, resourceId string) (string, error) {
+	ch := calendar.Channel{
+		ResourceId: resourceId,
+		Id:         channelId,
+	}
+	err := cli.calSrv.Channels.Stop(&ch).Do()
+	if err != nil {
+		return "", err
+	}
+	log.Printf("stopped channel %s", channelId)
+	return channelId, nil
 }
