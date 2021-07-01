@@ -92,7 +92,8 @@ func OnNotify(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")
 	cli := NewClient()
 	defer cli.fsCli.Close()
-	calId := cli.Do()
+	log.Printf("request headers: %+v", r.Header["X-Goog-Resource-State"])
+	calId := cli.Do(r.Header["X-Goog-Resource-State"][0] == "exists")
 	if calId == "" {
 		w.WriteHeader(http.StatusInternalServerError)
 	} else {
@@ -131,14 +132,36 @@ func NewClient() Client {
 	return *cli
 }
 
-func (cli *Client) Do() string {
-
+func (cli *Client) Do(hasSyncToken bool) string {
 	t := time.Now().Format(time.RFC3339)
-	events, err := cli.calSrv.Events.List(cli.conf.SrcId).ShowDeleted(false).
-		SingleEvents(true).TimeMin(t).MaxResults(10).OrderBy("startTime").Do()
+	call := cli.calSrv.Events.List(cli.conf.SrcId).ShowDeleted(false).
+		SingleEvents(true).TimeMin(t).MaxResults(10).OrderBy("startTime")
+
+	if !hasSyncToken {
+		// get token
+		doc, err := cli.fsCli.Collection("calendar").Doc("channel").Get(cli.ctx)
+		if err != nil {
+			log.Fatalf("sync token: %s", err)
+		}
+		nextToken, ok := doc.Data()["nextSyncToken"].(string)
+		log.Printf("sync result: %s %T", nextToken, ok)
+		call = call.SyncToken(nextToken)
+	}
+
+	events, err := call.Do()
 	if err != nil {
 		log.Fatalf("Unable to retrieve next ten of the user's events: %v", err)
 	}
+
+	// set token
+	result, err := cli.fsCli.Collection("calendar").Doc("channel").Set(cli.ctx, map[string]interface{}{
+		"nextSyncToken": events.NextSyncToken,
+	})
+	if err != nil {
+		log.Fatalf("sync token: %s", err)
+	}
+	log.Printf("sync result: %+v", result)
+
 	fmt.Println("Upcoming events:")
 	if len(events.Items) == 0 {
 		fmt.Println("No upcoming events found.")
