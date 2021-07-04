@@ -206,7 +206,7 @@ func (cli *Client) SyncEvent(srcEvt *calendar.Event) (*string, error) {
 
 func (cli *Client) getEventTime(srcEvt *calendar.Event) (string, string) {
 	if srcEvt.Status != "confirmed" { // キャンセル等
-		// TODO: キャンセルの場合は作成済みイベントを削除したい
+		// TODO: キャンセルや変更の場合は作成済みイベントを削除したい
 		return "", ""
 	}
 	if srcEvt.Start.DateTime == "" { // 終日
