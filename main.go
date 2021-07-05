@@ -24,6 +24,7 @@ func main() {
 	http.HandleFunc("/notify", OnNotify)
 	http.HandleFunc("/watch", OnWatch)
 	http.HandleFunc("/stop", OnStop)
+	http.HandleFunc("/renew", OnRenew)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -243,7 +244,6 @@ func OnWatch(w http.ResponseWriter, r *http.Request) {
 	calId, err := cli.StartWatch()
 	if err != nil {
 		log.Fatalf("Start watch: %s", err)
-		w.WriteHeader(http.StatusInternalServerError)
 	} else {
 		w.WriteHeader(http.StatusOK)
 	}
@@ -254,9 +254,30 @@ func OnWatch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (cli *Client) StartWatch() (string, error) {
-	id, err := uuid.NewRandom()
+	ch, err := cli.newChannel()
 	if err != nil {
 		return "", err
+	}
+
+	res, err := cli.calSrv.Events.Watch(cli.conf.SrcId, ch).Do()
+	if err != nil {
+		return "", err
+	}
+	_, err = cli.fsCli.Collection("calendar").Doc("channel").Set(cli.ctx, map[string]interface{}{
+		"channelId":  ch.Id,
+		"resourceId": res.ResourceId,
+		"exp":        res.Expiration,
+	})
+	if err != nil {
+		return "", err
+	}
+	return res.ResourceId, nil
+}
+
+func (cli *Client) newChannel() (*calendar.Channel, error) {
+	id, err := uuid.NewRandom()
+	if err != nil {
+		return nil, fmt.Errorf("get random uuid: %s", err)
 	}
 	// set expiration but forced to about 1 month later
 	exp, _ := time.Parse(gcalTimeFormat, "2030-01-01T00:00:00+09:00")
@@ -266,20 +287,7 @@ func (cli *Client) StartWatch() (string, error) {
 		Expiration: exp.UnixNano() / int64(time.Millisecond),
 		Address:    cli.conf.Url,
 	}
-	res, err := cli.calSrv.Events.Watch(cli.conf.SrcId, &ch).Do()
-	if err != nil {
-		return "", err
-	}
-	rid := res.ResourceId
-	_, err = cli.fsCli.Collection("calendar").Doc("channel").Set(cli.ctx, map[string]interface{}{
-		"channelId":  id.String(),
-		"resourceId": res.ResourceId,
-		"exp":        res.Expiration,
-	})
-	if err != nil {
-		return "", err
-	}
-	return rid, nil
+	return &ch, nil
 }
 
 func OnStop(w http.ResponseWriter, r *http.Request) {
@@ -289,7 +297,6 @@ func OnStop(w http.ResponseWriter, r *http.Request) {
 	channelId, err := cli.StopWatch(r.FormValue("channel-id"), r.FormValue("resource-id"))
 	if err != nil {
 		log.Fatalf("Start watch: %s", err)
-		w.WriteHeader(http.StatusInternalServerError)
 	} else {
 		w.WriteHeader(http.StatusOK)
 	}
@@ -309,4 +316,58 @@ func (cli *Client) StopWatch(channelId string, resourceId string) (string, error
 	}
 	log.Printf("stopped channel %s", channelId)
 	return channelId, nil
+}
+
+func OnRenew(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain")
+	cli := NewClient()
+	defer cli.fsCli.Close()
+	channelId, err := cli.RenewWatch()
+	if err != nil {
+		log.Fatalf("Renew watch: %s", err)
+	} else {
+		w.WriteHeader(http.StatusOK)
+	}
+	if _, err := w.Write([]byte(channelId)); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func (cli *Client) RenewWatch() (string, error) {
+	ch, err := cli.newChannel()
+	if err != nil {
+		return "", err
+	}
+	res, err := cli.calSrv.Events.Watch(cli.conf.SrcId, ch).Do()
+	if err != nil {
+		return "", err
+	}
+
+	// get stopping channel
+	snap, err := cli.fsCli.Collection("calendar").Doc("channel").Get(cli.ctx)
+	if err != nil {
+		return "", err
+	}
+	m := snap.Data()
+	fmt.Println(m["channelId"].(string), m["resourceId"].(string))
+
+	// set new channel
+	_, err = cli.fsCli.Collection("calendar").Doc("channel").Set(cli.ctx, map[string]interface{}{
+		"channelId":  ch.Id,
+		"resourceId": res.ResourceId,
+		"exp":        res.Expiration,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	// stop channel
+	stoppingCh := calendar.Channel{
+		ResourceId: m["resourceId"].(string),
+		Id:         m["channelId"].(string),
+	}
+	if err := cli.calSrv.Channels.Stop(&stoppingCh).Do(); err != nil {
+		return "", err
+	}
+	return "", nil
 }
