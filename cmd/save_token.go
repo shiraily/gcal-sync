@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -17,11 +18,11 @@ import (
 )
 
 // Retrieve a token, saves the token, then returns the generated client.
-func getClient(config *oauth2.Config) *http.Client {
+func getClient(config *oauth2.Config, filePrefix string) *http.Client {
 	// The file token.json stores the user's access and refresh tokens, and is
 	// created automatically when the authorization flow completes for the first
 	// time.
-	tokFile := "token.json"
+	tokFile := fmt.Sprintf("%s_token.json", filePrefix)
 	tok, err := tokenFromFile(tokFile)
 	if err != nil {
 		tok = getTokenFromWeb(config)
@@ -48,6 +49,7 @@ func getTokenFromWeb(config *oauth2.Config) *oauth2.Token {
 	return tok
 }
 
+// TODO remove
 // Retrieves a token from a local file.
 func tokenFromFile(file string) (*oauth2.Token, error) {
 	f, err := os.Open(file)
@@ -72,6 +74,12 @@ func saveToken(path string, token *oauth2.Token) {
 }
 
 func main() {
+	flag.Parse()
+	args := flag.Args()
+	if len(args) != 1 {
+		return
+	}
+	filePrefix := args[0]
 	ctx := context.Background()
 	b, err := ioutil.ReadFile("credentials.json")
 	if err != nil {
@@ -79,11 +87,11 @@ func main() {
 	}
 
 	// If modifying these scopes, delete your previously saved token.json.
-	config, err := google.ConfigFromJSON(b, calendar.CalendarReadonlyScope)
+	config, err := google.ConfigFromJSON(b, "https://www.googleapis.com/auth/calendar.events.owned")
 	if err != nil {
 		log.Fatalf("Unable to parse client secret file to config: %v", err)
 	}
-	client := getClient(config)
+	client := getClient(config, filePrefix)
 
 	srv, err := calendar.NewService(ctx, option.WithHTTPClient(client))
 	if err != nil {
