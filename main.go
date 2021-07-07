@@ -10,7 +10,6 @@ import (
 
 func main() {
 	http.HandleFunc("/notify", OnNotify)
-	http.HandleFunc("/watch", OnWatch)
 	http.HandleFunc("/stop", OnStop)
 	http.HandleFunc("/renew", OnRenew)
 
@@ -33,22 +32,6 @@ func OnNotify(w http.ResponseWriter, r *http.Request) {
 	calId, err := cli.Do(len(r.Header["X-Goog-Resource-State"]) > 0 && r.Header["X-Goog-Resource-State"][0] == "exists")
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-	} else {
-		w.WriteHeader(http.StatusOK)
-	}
-	if _, err := w.Write([]byte(calId)); err != nil {
-		log.Fatal(err)
-		return
-	}
-}
-
-func OnWatch(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/plain")
-	cli := calendar.NewClient()
-	defer cli.Close()
-	calId, err := cli.StartWatch()
-	if err != nil {
-		log.Fatalf("Start watch: %s", err)
 	} else {
 		w.WriteHeader(http.StatusOK)
 	}
