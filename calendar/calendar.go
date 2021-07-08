@@ -68,7 +68,7 @@ func (cli *Client) Close() {
 	cli.fsCli.Close()
 }
 
-func (cli *Client) Do(existsSyncToken bool) (string, error) {
+func (cli *Client) Sync(existsSyncToken bool) (string, error) {
 	call := cli.calSrv.Events.List(cli.conf.SrcId)
 	if existsSyncToken {
 		// get token from firestore
@@ -108,7 +108,7 @@ func (cli *Client) Do(existsSyncToken bool) (string, error) {
 	}
 	var ids []string
 	for _, item := range events.Items {
-		destEvtId, err := cli.SyncEvent(item)
+		destEvtId, err := cli.create(item)
 		if err != nil {
 			log.Fatalf("Skipped %s %s: %s", item.Id, item.Summary, err)
 		} else if destEvtId == nil {
@@ -120,7 +120,7 @@ func (cli *Client) Do(existsSyncToken bool) (string, error) {
 	return strings.Join(ids, ", "), nil
 }
 
-func (cli *Client) SyncEvent(srcEvt *calendar.Event) (*string, error) {
+func (cli *Client) create(srcEvt *calendar.Event) (*string, error) {
 	start, end := cli.getEventTime(srcEvt)
 	if start == "" {
 		return nil, nil

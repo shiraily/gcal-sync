@@ -29,7 +29,7 @@ func OnNotify(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")
 	cli := calendar.NewClient()
 	defer cli.Close()
-	calId, err := cli.Do(len(r.Header["X-Goog-Resource-State"]) > 0 && r.Header["X-Goog-Resource-State"][0] == "exists")
+	calId, err := cli.Sync(len(r.Header["X-Goog-Resource-State"]) > 0 && r.Header["X-Goog-Resource-State"][0] == "exists")
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 	} else {

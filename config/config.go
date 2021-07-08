@@ -11,8 +11,8 @@ type Config struct {
 	Url          string `yaml:"url"` // webhook url
 	ClientSecret string `yaml:"client_secret"`
 	Project      string `yaml:"project"`
-	SrcId        string `yaml:"cal_id_private"`
-	DestId       string `yaml:"cal_id_business"`
+	SrcId        string `yaml:"src_cal_id"`
+	DestId       string `yaml:"dest_cal_id"`
 	Rules        []rule `yaml:"rules"`
 }
 
