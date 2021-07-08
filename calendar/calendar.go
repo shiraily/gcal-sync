@@ -3,6 +3,7 @@ package calendar
 import (
 	"context"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"regexp"
 	"strings"
@@ -16,29 +17,56 @@ import (
 	"google.golang.org/api/option"
 
 	"github.com/shiraily/gcal-functions/config"
+	"github.com/shiraily/gcal-functions/oauth"
 )
 
-const gcalTimeFormat = "2006-01-02T15:04:05-07:00"
+const (
+	gcalTimeFormat         = "2006-01-02T15:04:05-07:00"
+	calendarScopeWithOAuth = "https://www.googleapis.com/auth/calendar.events.owned"
+	clientSecretFileName   = "client_secret.json"
+)
 
 type Client struct {
-	ctx    context.Context
-	conf   *config.Config
-	calSrv *calendar.Service
-	fsCli  *firestore.Client
+	ctx        context.Context
+	conf       *config.Config
+	srcCalSrv  *calendar.Service
+	destCalSrv *calendar.Service
+	fsCli      *firestore.Client
 }
 
 func NewClient() Client {
 	cli := &Client{}
 	// envs
 	cli.conf = config.GetConfig()
-
 	cli.ctx = context.Background()
-	srv, err := NewCalendarService(cli.ctx, []byte(cli.conf.ClientSecret))
-	if err != nil {
-		log.Fatalf("Retrieve Calendar client: %s", err)
-	}
-	cli.calSrv = srv
 
+	if cli.conf.UseOAuthToken() {
+		srcSrv, err := NewCalendarService(cli.ctx, clientSecretFileName, cli.conf.SrcTokenFile)
+		if err != nil {
+			log.Fatalf("Retrieve Calendar client: %s", err)
+		}
+		cli.srcCalSrv = srcSrv
+
+		destSrv, err := NewCalendarService(cli.ctx, clientSecretFileName, cli.conf.DestTokenFile)
+		if err != nil {
+			log.Fatalf("Retrieve Calendar client: %s", err)
+		}
+		cli.srcCalSrv = destSrv
+	} else {
+		srcSrv, err := NewCalendarServiceWithServiceAccount(cli.ctx, []byte(cli.conf.ClientSecret))
+		if err != nil {
+			log.Fatalf("Retrieve Calendar client: %s", err)
+		}
+		cli.srcCalSrv = srcSrv
+
+		destSrv, err := NewCalendarServiceWithServiceAccount(cli.ctx, []byte(cli.conf.ClientSecret))
+		if err != nil {
+			log.Fatalf("Retrieve Calendar client: %s", err)
+		}
+		cli.srcCalSrv = destSrv
+	}
+
+	var err error
 	cli.fsCli, err = cli.NewFirestoreApp([]byte(cli.conf.ClientSecret))
 	if err != nil {
 		log.Fatalf("Create firestore cli: %s", err)
@@ -47,7 +75,25 @@ func NewClient() Client {
 	return *cli
 }
 
-func NewCalendarService(ctx context.Context, jsonKey []byte) (*calendar.Service, error) {
+func NewCalendarService(ctx context.Context, credentialFile, oauthTokenFile string) (*calendar.Service, error) {
+	b, err := ioutil.ReadFile(credentialFile)
+	if err != nil {
+		return nil, fmt.Errorf("read client secret file: %s", err)
+	}
+	config, err := google.ConfigFromJSON(b, calendarScopeWithOAuth)
+	if err != nil {
+		return nil, fmt.Errorf("parse client secret file to config: %s", err)
+	}
+
+	tok, err := oauth.TokenFromFile(oauthTokenFile)
+	if err != nil {
+		return nil, fmt.Errorf("read OAuth token: %s", err)
+	}
+	return calendar.NewService(ctx, option.WithHTTPClient(config.Client(ctx, tok)))
+}
+
+// Use service account json
+func NewCalendarServiceWithServiceAccount(ctx context.Context, jsonKey []byte) (*calendar.Service, error) {
 	config, err := google.JWTConfigFromJSON(jsonKey, calendar.CalendarEventsScope)
 	if err != nil {
 		return nil, fmt.Errorf("parse client secret file to config: %s", err)
@@ -69,7 +115,7 @@ func (cli *Client) Close() {
 }
 
 func (cli *Client) Sync(existsSyncToken bool) (string, error) {
-	call := cli.calSrv.Events.List(cli.conf.SrcId)
+	call := cli.srcCalSrv.Events.List(cli.conf.SrcId)
 	if existsSyncToken {
 		// get token from firestore
 		doc, err := cli.fsCli.Collection("calendar").Doc("channel").Get(cli.ctx)
@@ -80,7 +126,7 @@ func (cli *Client) Sync(existsSyncToken bool) (string, error) {
 		call = call.SyncToken(nextToken)
 	} else {
 		t := time.Now().Format(time.RFC3339)
-		events, err := cli.calSrv.Events.List(cli.conf.SrcId).ShowDeleted(false).
+		events, err := cli.srcCalSrv.Events.List(cli.conf.SrcId).ShowDeleted(false).
 			SingleEvents(true).TimeMin(t).Do()
 		if err != nil {
 			return "", fmt.Errorf("get first token: %s", err)
@@ -136,7 +182,7 @@ func (cli *Client) create(srcEvt *calendar.Event) (*string, error) {
 		},
 	}
 
-	destEvt, err := cli.calSrv.Events.Insert(cli.conf.DestId, &evt).Do()
+	destEvt, err := cli.destCalSrv.Events.Insert(cli.conf.DestId, &evt).Do()
 	if err != nil {
 		return nil, fmt.Errorf("create: %w", err)
 	}
@@ -181,7 +227,7 @@ func (cli *Client) StartWatch() (string, error) {
 		return "", err
 	}
 
-	res, err := cli.calSrv.Events.Watch(cli.conf.SrcId, ch).Do()
+	res, err := cli.srcCalSrv.Events.Watch(cli.conf.SrcId, ch).Do()
 	if err != nil {
 		return "", err
 	}
@@ -217,7 +263,7 @@ func (cli *Client) StopWatch(channelId string, resourceId string) (string, error
 		ResourceId: resourceId,
 		Id:         channelId,
 	}
-	err := cli.calSrv.Channels.Stop(&ch).Do()
+	err := cli.srcCalSrv.Channels.Stop(&ch).Do()
 	if err != nil {
 		return "", err
 	}
@@ -230,7 +276,7 @@ func (cli *Client) RenewWatch() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	res, err := cli.calSrv.Events.Watch(cli.conf.SrcId, ch).Do()
+	res, err := cli.srcCalSrv.Events.Watch(cli.conf.SrcId, ch).Do()
 	if err != nil {
 		return "", err
 	}
@@ -258,7 +304,7 @@ func (cli *Client) RenewWatch() (string, error) {
 		ResourceId: m["resourceId"].(string),
 		Id:         m["channelId"].(string),
 	}
-	if err := cli.calSrv.Channels.Stop(&stoppingCh).Do(); err != nil {
+	if err := cli.srcCalSrv.Channels.Stop(&stoppingCh).Do(); err != nil {
 		return "", err
 	}
 	return "", nil

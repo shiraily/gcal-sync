@@ -8,12 +8,20 @@ import (
 )
 
 type Config struct {
-	Url          string `yaml:"url"` // webhook url
-	ClientSecret string `yaml:"client_secret"`
-	Project      string `yaml:"project"`
-	SrcId        string `yaml:"src_cal_id"`
-	DestId       string `yaml:"dest_cal_id"`
-	Rules        []rule `yaml:"rules"`
+	Url     string `yaml:"url"` // webhook url
+	Project string `yaml:"project"`
+	Rules   []rule `yaml:"rules"`
+
+	ClientSecret string `yaml:"client_secret,omitempty"`
+	SrcId        string `yaml:"src_cal_id,omitempty"`
+	DestId       string `yaml:"dest_cal_id,omitempty"`
+
+	SrcTokenFile  string `yaml:"src_token_file,omitempty"`
+	DestTokenFile string `yaml:"dest_token_file,omitempty"`
+}
+
+func (c *Config) UseOAuthToken() bool {
+	return c.ClientSecret == ""
 }
 
 type rule struct {
@@ -34,5 +42,16 @@ func GetConfig() *Config {
 		log.Fatalf("Unmarshal: %v", err)
 	}
 
+	if c.ClientSecret != "" {
+		if c.SrcId == "" || c.DestId == "" {
+			log.Fatalf("Not enough calendar id")
+		}
+	} else {
+		if c.SrcTokenFile == "" || c.DestTokenFile == "" {
+			log.Fatalf("Not enough OAuth token file")
+		}
+		c.SrcId = "primary"
+		c.DestId = "primary"
+	}
 	return &c
 }
