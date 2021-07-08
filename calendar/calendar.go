@@ -40,34 +40,23 @@ func NewClient() Client {
 	cli.conf = config.GetConfig()
 	cli.ctx = context.Background()
 
-	if cli.conf.UseOAuthToken() {
-		srcSrv, err := NewCalendarService(cli.ctx, clientSecretFileName, cli.conf.SrcTokenFile)
-		if err != nil {
-			log.Fatalf("Retrieve Calendar client: %s", err)
-		}
-		cli.srcCalSrv = srcSrv
-
-		destSrv, err := NewCalendarService(cli.ctx, clientSecretFileName, cli.conf.DestTokenFile)
-		if err != nil {
-			log.Fatalf("Retrieve Calendar client: %s", err)
-		}
-		cli.srcCalSrv = destSrv
-	} else {
-		srcSrv, err := NewCalendarServiceWithServiceAccount(cli.ctx, []byte(cli.conf.ClientSecret))
-		if err != nil {
-			log.Fatalf("Retrieve Calendar client: %s", err)
-		}
-		cli.srcCalSrv = srcSrv
-
-		destSrv, err := NewCalendarServiceWithServiceAccount(cli.ctx, []byte(cli.conf.ClientSecret))
-		if err != nil {
-			log.Fatalf("Retrieve Calendar client: %s", err)
-		}
-		cli.srcCalSrv = destSrv
+	srcSrv, err := NewCalendarService(cli.ctx, clientSecretFileName, cli.conf.SrcTokenFile)
+	if err != nil {
+		log.Fatalf("Retrieve Calendar client: %s", err)
 	}
+	cli.srcCalSrv = srcSrv
 
-	var err error
-	cli.fsCli, err = cli.NewFirestoreApp([]byte(cli.conf.ClientSecret))
+	destSrv, err := NewCalendarService(cli.ctx, clientSecretFileName, cli.conf.DestTokenFile)
+	if err != nil {
+		log.Fatalf("Retrieve Calendar client: %s", err)
+	}
+	cli.srcCalSrv = destSrv
+
+	b, err := ioutil.ReadFile(clientSecretFileName)
+	if err != nil {
+		log.Fatalf("read client secret file: %s", err)
+	}
+	cli.fsCli, err = cli.NewFirestoreApp([]byte(b))
 	if err != nil {
 		log.Fatalf("Create firestore cli: %s", err)
 	}
@@ -92,9 +81,13 @@ func NewCalendarService(ctx context.Context, credentialFile, oauthTokenFile stri
 	return calendar.NewService(ctx, option.WithHTTPClient(config.Client(ctx, tok)))
 }
 
-// Use service account json
-func NewCalendarServiceWithServiceAccount(ctx context.Context, jsonKey []byte) (*calendar.Service, error) {
-	config, err := google.JWTConfigFromJSON(jsonKey, calendar.CalendarEventsScope)
+// 参考: サービスアカウントのみを用いる場合。APIコール時にはアクセス対象のカレンダーIDが必要 (要実装)
+func NewCalendarServiceWithServiceAccount(ctx context.Context, credentialFile string) (*calendar.Service, error) {
+	b, err := ioutil.ReadFile(credentialFile)
+	if err != nil {
+		return nil, fmt.Errorf("read client secret file: %s", err)
+	}
+	config, err := google.JWTConfigFromJSON(b, calendar.CalendarEventsScope)
 	if err != nil {
 		return nil, fmt.Errorf("parse client secret file to config: %s", err)
 	}
