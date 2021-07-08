@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/shiraily/gcal-functions/calendar"
+	"github.com/shiraily/gcal-sync/calendar"
 )
 
 func main() {

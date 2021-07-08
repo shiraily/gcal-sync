@@ -14,7 +14,7 @@ import (
 	"google.golang.org/api/calendar/v3"
 	"google.golang.org/api/option"
 
-	oauthToken "github.com/shiraily/gcal-functions/oauth"
+	oauthToken "github.com/shiraily/gcal-sync/oauth"
 )
 
 // Retrieve a token, saves the token, then returns the generated client.

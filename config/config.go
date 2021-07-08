@@ -14,10 +14,6 @@ type Config struct {
 
 	SrcTokenFile  string `yaml:"src"`
 	DestTokenFile string `yaml:"dest"`
-
-	// Deprecated: need?
-	SrcId  string
-	DestId string
 }
 
 type rule struct {

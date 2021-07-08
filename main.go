@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/shiraily/gcal-functions/calendar"
+	"github.com/shiraily/gcal-sync/calendar"
 )
 
 func main() {
@@ -31,6 +31,7 @@ func OnNotify(w http.ResponseWriter, r *http.Request) {
 	defer cli.Close()
 	calId, err := cli.Sync(len(r.Header["X-Goog-Resource-State"]) > 0 && r.Header["X-Goog-Resource-State"][0] == "exists")
 	if err != nil {
+		log.Printf("debug error: %s", err)
 		w.WriteHeader(http.StatusInternalServerError)
 	} else {
 		w.WriteHeader(http.StatusOK)

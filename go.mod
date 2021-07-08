@@ -1,4 +1,4 @@
-module github.com/shiraily/gcal-functions
+module github.com/shiraily/gcal-sync
 
 go 1.16
 
