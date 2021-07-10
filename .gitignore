@@ -17,7 +17,8 @@
 static/
 
 # Auth
-/*credentials.json
+/service_account_key.json
+/credentials.json
 
 # for OAuth
 /*token.json

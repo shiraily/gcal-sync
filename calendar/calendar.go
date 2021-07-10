@@ -28,7 +28,7 @@ const (
 )
 
 var (
-	serviceAccountClientSecret = "service_account_credentials.json"
+	serviceAccountClientSecret = "service_account_key.json"
 )
 
 type Client struct {
