@@ -50,3 +50,14 @@ Before deploy an app, set .env file according to .sample.env file.
 ```
 make deploy & Cron
 ```
+
+# Use
+
+### Register webhook URL
+
+
+### Stop webhool URL
+
+```
+go run cmd/stop/stop.go channel-id resource-id
+```

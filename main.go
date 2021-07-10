@@ -10,7 +10,6 @@ import (
 
 func main() {
 	http.HandleFunc("/notify", OnNotify)
-	http.HandleFunc("/stop", OnStop)
 	http.HandleFunc("/renew", OnRenew)
 
 	port := os.Getenv("PORT")
@@ -29,6 +28,7 @@ func OnNotify(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")
 	cli := calendar.NewClient()
 	defer cli.Close()
+	log.Printf("channelId=%s, resourceId=%s", r.Header["X-Goog-Channel-Id"], r.Header["X-Goog-Resource-Id"])
 	calId, err := cli.Sync(len(r.Header["X-Goog-Resource-State"]) > 0 && r.Header["X-Goog-Resource-State"][0] == "exists")
 	if err != nil {
 		log.Printf("debug error: %s", err)
@@ -39,21 +39,6 @@ func OnNotify(w http.ResponseWriter, r *http.Request) {
 	if _, err := w.Write([]byte(calId)); err != nil {
 		log.Fatal(err)
 		return
-	}
-}
-
-func OnStop(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/plain")
-	cli := calendar.NewClient()
-	defer cli.Close()
-	channelId, err := cli.StopWatch(r.FormValue("channel-id"), r.FormValue("resource-id"))
-	if err != nil {
-		log.Fatalf("Start watch: %s", err)
-	} else {
-		w.WriteHeader(http.StatusOK)
-	}
-	if _, err := w.Write([]byte(channelId)); err != nil {
-		log.Fatal(err)
 	}
 }
 
