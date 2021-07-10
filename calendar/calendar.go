@@ -21,10 +21,13 @@ import (
 )
 
 const (
-	gcalTimeFormat             = "2006-01-02T15:04:05-07:00"
-	calendarScopeWithOAuth     = "https://www.googleapis.com/auth/calendar.events.owned"
-	calendarId                 = "primary"
-	oauthClientSecret          = "oauth_credentials.json"
+	gcalTimeFormat         = "2006-01-02T15:04:05-07:00"
+	calendarScopeWithOAuth = "https://www.googleapis.com/auth/calendar.events.owned"
+	calendarId             = "primary"
+	oauthClientSecret      = "credentials.json"
+)
+
+var (
 	serviceAccountClientSecret = "service_account_credentials.json"
 )
 
