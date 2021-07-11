@@ -2,6 +2,7 @@ package calendar
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -82,20 +83,6 @@ func NewCalendarService(ctx context.Context, credentialFile, oauthTokenFile stri
 	return calendar.NewService(ctx, option.WithHTTPClient(config.Client(ctx, tok)))
 }
 
-// 参考: サービスアカウントのみを用いる場合。APIコール時にはアクセス対象のカレンダーIDが必要 (要実装)
-func NewCalendarServiceWithServiceAccount(ctx context.Context, credentialFile string) (*calendar.Service, error) {
-	b, err := ioutil.ReadFile(credentialFile)
-	if err != nil {
-		return nil, fmt.Errorf("read client secret file: %s", err)
-	}
-	config, err := google.JWTConfigFromJSON(b, calendar.CalendarEventsScope)
-	if err != nil {
-		return nil, fmt.Errorf("parse client secret file to config: %s", err)
-	}
-	client := config.Client(ctx)
-	return calendar.NewService(ctx, option.WithHTTPClient(client))
-}
-
 func (cli *Client) NewFirestoreApp(credentialFile string) (*firestore.Client, error) {
 	app, err := firebase.NewApp(cli.ctx, &firebase.Config{ProjectID: cli.conf.Project}, option.WithCredentialsFile(credentialFile))
 	if err != nil {
@@ -108,43 +95,42 @@ func (cli *Client) Close() {
 	cli.fsCli.Close()
 }
 
-func (cli *Client) Sync(existsSyncToken bool) (string, error) {
-	call := cli.srcCalSrv.Events.List(calendarId)
-	if existsSyncToken {
-		// get token from firestore
-		doc, err := cli.fsCli.Collection("calendar").Doc("channel").Get(cli.ctx)
-		if err != nil {
-			return "", fmt.Errorf("sync token: %s", err)
-		}
-		nextToken, _ := doc.Data()["nextSyncToken"].(string)
-		call = call.SyncToken(nextToken)
-	} else {
-		t := time.Now().Format(time.RFC3339)
-		events, err := cli.srcCalSrv.Events.List(calendarId).ShowDeleted(false).
-			SingleEvents(true).TimeMin(t).Do()
-		if err != nil {
-			return "", fmt.Errorf("get first token: %s", err)
-		}
-		call = call.SyncToken(events.NextSyncToken)
+func (cli *Client) SyncInitial() error {
+	t := time.Now().Format(time.RFC3339)
+	events, err := cli.srcCalSrv.Events.List(calendarId).ShowDeleted(false).
+		SingleEvents(true).TimeMin(t).Do()
+	if err != nil {
+		return fmt.Errorf("get first token: %s", err)
+	}
+	if err := cli.saveToken(events.NextSyncToken); err != nil {
+		return err
+	}
+	log.Printf("Initial full sync got token: %s", events.NextSyncToken)
+	return nil
+}
+
+func (cli *Client) Sync() error {
+	nextToken, err := cli.readToken()
+	if err != nil {
+		return err
+	}
+	if nextToken == "" {
+		return errors.New("nextSyncToken is empty")
 	}
 
-	events, err := call.Do()
+	log.Printf("use token: %s", nextToken)
+	events, err := cli.srcCalSrv.Events.List(calendarId).SyncToken(nextToken).Do()
 	if err != nil {
-		return "", fmt.Errorf("retrieve next events: %s", err)
+		return fmt.Errorf("retrieve next events: %s", err)
 	}
 
-	// set token
-	_, err = cli.fsCli.Collection("calendar").Doc("channel").Update(
-		cli.ctx,
-		[]firestore.Update{{Path: "nextSyncToken", Value: events.NextSyncToken}},
-	)
-	if err != nil {
-		return "", fmt.Errorf("sync token: %s", err)
+	if err := cli.saveToken(events.NextSyncToken); err != nil {
+		return err
 	}
 
 	if len(events.Items) == 0 {
-		fmt.Println("No upcoming events found.")
-		return "", nil
+		log.Println("No upcoming events found.")
+		return nil
 	}
 	var ids []string
 	for _, item := range events.Items {
@@ -157,7 +143,31 @@ func (cli *Client) Sync(existsSyncToken bool) (string, error) {
 			ids = append(ids, *destEvtId)
 		}
 	}
-	return strings.Join(ids, ", "), nil
+	log.Printf("created: %s", strings.Join(ids, ", "))
+	return nil
+}
+
+func (cli *Client) readToken() (string, error) {
+	doc, err := cli.fsCli.Collection("calendar").Doc("channel").Get(cli.ctx)
+	if err != nil {
+		return "", fmt.Errorf("sync token: %s", err)
+	}
+	token, _ := doc.Data()["nextSyncToken"].(string)
+	return token, nil
+}
+
+func (cli *Client) saveToken(syncToken string) error {
+	if syncToken == "" {
+		return errors.New("cannot save empty nextSyncToken")
+	}
+	_, err := cli.fsCli.Collection("calendar").Doc("channel").Update(
+		cli.ctx,
+		[]firestore.Update{{Path: "nextSyncToken", Value: syncToken}},
+	)
+	if err != nil {
+		return fmt.Errorf("sync token: %s", err)
+	}
+	return nil
 }
 
 func (cli *Client) create(srcEvt *calendar.Event) (*string, error) {
@@ -186,26 +196,25 @@ func (cli *Client) newEvent(srcEvt *calendar.Event) *calendar.Event {
 
 	start, _ := time.Parse(gcalTimeFormat, srcEvt.Start.DateTime)
 	end, _ := time.Parse(gcalTimeFormat, srcEvt.End.DateTime)
-	if start.Weekday() == time.Saturday ||
-		start.Weekday() == time.Sunday ||
-		end.Weekday() == time.Saturday ||
-		end.Weekday() == time.Sunday {
+	if w := start.Weekday(); w == time.Saturday || w == time.Sunday {
+		return nil
+	} else if w := end.Weekday(); w == time.Saturday || w == time.Sunday {
 		return nil
 	}
 
 	matched := false
 	for _, rule := range cli.conf.Rules {
 		if regexp.MustCompile(rule.Match).MatchString(srcEvt.Summary) {
-			start.Add(time.Duration(rule.StartOffset) * time.Minute)
-			end.Add(time.Duration(rule.EndOffset) * time.Minute)
+			start = add(start, rule.StartOffset)
+			end = add(end, rule.EndOffset)
 			matched = true
 			break
 		}
 	}
 	if !matched {
 		// default
-		start.Add(time.Duration(defaultOffset) * (time.Minute))
-		end.Add(time.Duration(defaultOffset) * (time.Minute))
+		start = add(start, -defaultOffset)
+		end = add(end, defaultOffset)
 	}
 	return &calendar.Event{
 		Summary: "ブロック",
@@ -284,7 +293,7 @@ func (cli *Client) RenewWatch() (string, error) {
 		return "", err
 	}
 	m := snap.Data()
-	fmt.Println(m["channelId"].(string), m["resourceId"].(string))
+	log.Println(m["channelId"].(string), m["resourceId"].(string))
 
 	// set new channel
 	_, err = cli.fsCli.Collection("calendar").Doc("channel").Set(cli.ctx, map[string]interface{}{
@@ -305,4 +314,8 @@ func (cli *Client) RenewWatch() (string, error) {
 		return "", err
 	}
 	return "", nil
+}
+
+func add(t time.Time, offset int) time.Time {
+	return t.Add(time.Duration(offset) * time.Minute)
 }

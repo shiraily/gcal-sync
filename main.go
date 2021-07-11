@@ -29,14 +29,21 @@ func OnNotify(w http.ResponseWriter, r *http.Request) {
 	cli := calendar.NewClient()
 	defer cli.Close()
 	log.Printf("channelId=%s, resourceId=%s", r.Header["X-Goog-Channel-Id"], r.Header["X-Goog-Resource-Id"])
-	calId, err := cli.Sync(len(r.Header["X-Goog-Resource-State"]) > 0 && r.Header["X-Goog-Resource-State"][0] == "exists")
+	var err error
+	if len(r.Header["X-Goog-Resource-State"]) > 0 && r.Header["X-Goog-Resource-State"][0] == "exists" {
+		err = cli.Sync()
+	} else {
+		// initial
+		err = cli.SyncInitial()
+	}
 	if err != nil {
 		log.Printf("debug error: %s", err)
 		w.WriteHeader(http.StatusInternalServerError)
 	} else {
 		w.WriteHeader(http.StatusOK)
 	}
-	if _, err := w.Write([]byte(calId)); err != nil {
+
+	if _, err := w.Write([]byte("")); err != nil {
 		log.Fatal(err)
 		return
 	}
