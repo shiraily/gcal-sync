@@ -1,6 +1,6 @@
 runtime: go115
 
-service: gcal-functions
+service: gcal-sync
 
 handlers:
 - url: /(.*\.html)$

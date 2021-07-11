@@ -22,3 +22,6 @@ static/
 
 # for OAuth
 /*token.json
+
+# App Engine
+/app.yaml
