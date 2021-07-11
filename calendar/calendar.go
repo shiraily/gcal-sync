@@ -161,35 +161,25 @@ func (cli *Client) Sync(existsSyncToken bool) (string, error) {
 }
 
 func (cli *Client) create(srcEvt *calendar.Event) (*string, error) {
-	start, end := cli.getEventTime(srcEvt)
-	if start == "" {
+	evt := cli.newEvent(srcEvt)
+	if evt == nil {
 		return nil, nil
 	}
 
-	evt := calendar.Event{
-		Summary: "ブロック",
-		Start: &calendar.EventDateTime{
-			DateTime: start,
-		},
-		End: &calendar.EventDateTime{
-			DateTime: end,
-		},
-	}
-
-	destEvt, err := cli.destCalSrv.Events.Insert(calendarId, &evt).Do()
+	destEvt, err := cli.destCalSrv.Events.Insert(calendarId, evt).Do()
 	if err != nil {
 		return nil, fmt.Errorf("create: %w", err)
 	}
 	return &destEvt.Id, nil
 }
 
-func (cli *Client) getEventTime(srcEvt *calendar.Event) (string, string) {
+func (cli *Client) newEvent(srcEvt *calendar.Event) *calendar.Event {
 	if srcEvt.Status != "confirmed" { // キャンセル等
 		// TODO: キャンセルや変更の場合は作成済みイベントを削除したい
-		return "", ""
+		return nil
 	}
 	if srcEvt.Start.DateTime == "" { // 終日
-		return "", ""
+		return nil
 	}
 
 	start, _ := time.Parse(gcalTimeFormat, srcEvt.Start.DateTime)
@@ -198,21 +188,32 @@ func (cli *Client) getEventTime(srcEvt *calendar.Event) (string, string) {
 		start.Weekday() == time.Sunday ||
 		end.Weekday() == time.Saturday ||
 		end.Weekday() == time.Sunday {
-		return "", ""
+		return nil
 	}
 
-	if srcEvt.Location != "" {
-		return start.Add(time.Duration(-30) * (time.Minute)).Format(gcalTimeFormat),
-			end.Add(time.Duration(30) * (time.Minute)).Format(gcalTimeFormat)
-	} else {
-		for _, rule := range cli.conf.Rules {
-			if regexp.MustCompile(rule.Match).MatchString(srcEvt.Summary) {
-				return start.Add(time.Duration(rule.StartOffset) * time.Minute).Format(gcalTimeFormat),
-					end.Add(time.Duration(rule.EndOffset) * time.Minute).Format(gcalTimeFormat)
-			}
+	matched := false
+	for _, rule := range cli.conf.Rules {
+		if regexp.MustCompile(rule.Match).MatchString(srcEvt.Summary) {
+			start.Add(time.Duration(rule.StartOffset) * time.Minute)
+			end.Add(time.Duration(rule.EndOffset) * time.Minute)
+			matched = true
+			break
 		}
 	}
-	return srcEvt.Start.DateTime, srcEvt.End.DateTime
+	if !matched {
+		// default
+		start.Add(time.Duration(0) * (time.Minute))
+		end.Add(time.Duration(0) * (time.Minute))
+	}
+	return &calendar.Event{
+		Summary: "ブロック",
+		Start: &calendar.EventDateTime{
+			DateTime: start.Format(gcalTimeFormat),
+		},
+		End: &calendar.EventDateTime{
+			DateTime: end.Format(gcalTimeFormat),
+		},
+	}
 }
 
 func (cli *Client) StartWatch() (string, error) {
