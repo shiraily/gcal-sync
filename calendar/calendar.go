@@ -173,6 +173,8 @@ func (cli *Client) create(srcEvt *calendar.Event) (*string, error) {
 	return &destEvt.Id, nil
 }
 
+const defaultOffset = 30
+
 func (cli *Client) newEvent(srcEvt *calendar.Event) *calendar.Event {
 	if srcEvt.Status != "confirmed" { // キャンセル等
 		// TODO: キャンセルや変更の場合は作成済みイベントを削除したい
@@ -202,8 +204,8 @@ func (cli *Client) newEvent(srcEvt *calendar.Event) *calendar.Event {
 	}
 	if !matched {
 		// default
-		start.Add(time.Duration(0) * (time.Minute))
-		end.Add(time.Duration(0) * (time.Minute))
+		start.Add(time.Duration(defaultOffset) * (time.Minute))
+		end.Add(time.Duration(defaultOffset) * (time.Minute))
 	}
 	return &calendar.Event{
 		Summary: "ブロック",
