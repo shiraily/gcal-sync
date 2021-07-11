@@ -67,7 +67,7 @@ func NewFirestoreClient(ctx context.Context, project string) *firestore.Client {
 
 const CalendarId = "primary"
 
-func main() {
+func Watch() {
 	flag.Parse()
 	webhookURL := flag.Args()[0]
 	ctx := context.Background()

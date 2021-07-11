@@ -3,23 +3,46 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
+	"net/http"
+	"os"
 	"time"
 
 	"google.golang.org/api/calendar/v3"
 )
 
-func Notify() {
+func main() {
+	http.HandleFunc("/notify", OnNotify)
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "3000"
+	}
+	if err := http.ListenAndServe(":"+port, nil); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func OnNotify(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain")
+	log.Printf("channelId=%s, resourceId=%s", r.Header["X-Goog-Channel-Id"], r.Header["X-Goog-Resource-Id"])
+
 	ctx := context.Background()
 	svc := NewCalendarService(ctx, "src_token.json")
-	t := time.Now().Format(time.RFC3339)
-	currentEvents, _ := svc.Events.List(CalendarId).ShowDeleted(false).
-		SingleEvents(true).TimeMin(t).Do()
 
-	events, _ := svc.Events.List(CalendarId).SyncToken(currentEvents.NextSyncToken).Do()
-	fmt.Println(events.NextSyncToken) // saveしておく
+	resourceState := r.Header["X-Goog-Resource-State"]
+	if len(resourceState) > 0 && resourceState[0] == "sync" {
+		// 初回syncToken取得
+		currentEvents, _ := svc.Events.List(CalendarId).ShowDeleted(false).
+			SingleEvents(true).TimeMin(time.Now().Format(time.RFC3339)).Do()
+		fmt.Printf("syncToken: %s\n", currentEvents.NextSyncToken) // 保存する
+		return
+	}
+
+	syncToken := "" // 保存したtokenを使う
+	events, _ := svc.Events.List(CalendarId).SyncToken(syncToken).Do()
+	fmt.Println(syncToken, events.NextSyncToken) // NextSyncTokenは保存しておく
 
 	svc2 := NewCalendarService(ctx, "dest_token.json")
-
 	for _, srcEvt := range events.Items {
 		destEvt := newEvent(srcEvt)
 		if destEvt == nil {
@@ -28,6 +51,8 @@ func Notify() {
 		createdEvt, _ := svc2.Events.Insert(CalendarId, destEvt).Do()
 		fmt.Printf("created %s", createdEvt.Id)
 	}
+
+	w.WriteHeader(http.StatusOK)
 }
 
 func newEvent(srcEvt *calendar.Event) *calendar.Event {
