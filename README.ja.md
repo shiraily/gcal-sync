@@ -9,4 +9,6 @@ gcal-syncはGoogleカレンダーの予定を別のカレンダー（別アカ�
 
 # ドキュメントについて
 
-詳しくは[英語版README](https://github.com/shiraily/gcal-sync/blob/main/README.md)を参照ください。
+詳しくは[Qiitaの記事](https://qiita.com/shiraily/items/738bf2f5fcf5e6040ec4)を参照ください。
+
+または、[英語版README](https://github.com/shiraily/gcal-sync/blob/main/README.md)にも軽く記載してあります。
