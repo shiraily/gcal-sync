@@ -22,33 +22,37 @@ func main() {
 	}
 }
 
+var (
+	SrcCalId  = "hoge@example.com" // 同期元
+	DestCalId = "fuga@example.com" // 同期先
+)
+
 func OnNotify(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")
 	log.Printf("channelId=%s, resourceId=%s", r.Header["X-Goog-Channel-Id"], r.Header["X-Goog-Resource-Id"])
 
 	ctx := context.Background()
-	svc := NewCalendarService(ctx, "src_token.json")
+	svc := NewCalendarService(ctx)
 
 	resourceState := r.Header["X-Goog-Resource-State"]
 	if len(resourceState) > 0 && resourceState[0] == "sync" {
 		// 初回syncToken取得
-		currentEvents, _ := svc.Events.List(CalendarId).ShowDeleted(false).
+		currentEvents, _ := svc.Events.List(SrcCalId).ShowDeleted(false).
 			SingleEvents(true).TimeMin(time.Now().Format(time.RFC3339)).Do()
 		fmt.Printf("syncToken: %s\n", currentEvents.NextSyncToken) // 保存する
 		return
 	}
 
 	syncToken := "" // 保存したtokenを使う
-	events, _ := svc.Events.List(CalendarId).SyncToken(syncToken).Do()
+	events, _ := svc.Events.List(SrcCalId).SyncToken(syncToken).Do()
 	fmt.Println(syncToken, events.NextSyncToken) // NextSyncTokenは保存しておく
 
-	svc2 := NewCalendarService(ctx, "dest_token.json")
 	for _, srcEvt := range events.Items {
 		destEvt := newEvent(srcEvt)
 		if destEvt == nil {
 			continue
 		}
-		createdEvt, _ := svc2.Events.Insert(CalendarId, destEvt).Do()
+		createdEvt, _ := svc.Events.Insert(DestCalId, destEvt).Do()
 		fmt.Printf("created %s", createdEvt.Id)
 	}
 

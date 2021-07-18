@@ -26,14 +26,6 @@ But for example, it is difficult & bothered to set complicated rules on Zapier. 
 
 # Setup
 
-### Create OAuth client
-
-Needs
-
-- OAuth consent screen
-  - scope: `https://www.googleapis.com/auth/calendar.events.owned`
-- OAuth client secret
-
 ### Register domain
 
 You must register the domain for Push notification channel URL of Google Calendar.
@@ -57,13 +49,6 @@ For accessing to Firestore, needs service account key with Firebase Admin SDK ro
 - .env: sample is .sample.env
 - app.yaml: sample is sample.app.yaml
 
-### Get token
-
-```
-go run cmd/token/token.go src # for getting token of source calendar
-go run cmd/token/token.go dest # for destination calendar
-```
-
 ### App Engine & Cloud Scheduler
 
 ```
@@ -85,4 +70,23 @@ For some reason, you may want to stop some channels:
 
 ```
 go run cmd/stop/stop.go channel-id resource-id
+```
+
+# Options
+
+For accessing Google Calendar API, you can use oauth client instead of service account.
+
+### Create OAuth client
+
+Needs
+
+- OAuth consent screen
+  - scope: `https://www.googleapis.com/auth/calendar.events.owned`
+- OAuth client secret
+
+### Get token
+
+```
+go run cmd/token/token.go src # for getting token of source calendar
+go run cmd/token/token.go dest # for destination calendar
 ```

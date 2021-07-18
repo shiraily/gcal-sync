@@ -22,10 +22,12 @@ import (
 )
 
 const (
-	gcalTimeFormat         = "2006-01-02T15:04:05-07:00"
+	gcalTimeFormat = "2006-01-02T15:04:05-07:00"
+
+	// for oauth
 	calendarScopeWithOAuth = "https://www.googleapis.com/auth/calendar.events.owned"
-	calendarId             = "primary"
-	oauthClientSecret      = "credentials.json"
+	// oauthClientSecret      = redentials.json"
+	// calendarId             = "primary" // if use OAuth client, calendar id is always primary
 )
 
 var (
@@ -33,11 +35,10 @@ var (
 )
 
 type Client struct {
-	ctx        context.Context
-	conf       *config.Config
-	srcCalSrv  *calendar.Service
-	destCalSrv *calendar.Service
-	fsCli      *firestore.Client
+	ctx   context.Context
+	conf  *config.Config
+	svc   *calendar.Service
+	fsCli *firestore.Client
 }
 
 func NewClient() Client {
@@ -46,17 +47,11 @@ func NewClient() Client {
 	cli.conf = config.GetConfig()
 	cli.ctx = context.Background()
 
-	srcSrv, err := NewCalendarService(cli.ctx, oauthClientSecret, cli.conf.SrcTokenFile)
+	srcSrv, err := NewCalendarServiceWithServiceAccount(cli.ctx, serviceAccountClientSecret)
 	if err != nil {
 		log.Fatalf("Retrieve Calendar client: %s", err)
 	}
-	cli.srcCalSrv = srcSrv
-
-	destSrv, err := NewCalendarService(cli.ctx, oauthClientSecret, cli.conf.DestTokenFile)
-	if err != nil {
-		log.Fatalf("Retrieve Calendar client: %s", err)
-	}
-	cli.destCalSrv = destSrv
+	cli.svc = srcSrv
 
 	cli.fsCli, err = cli.NewFirestoreApp(serviceAccountClientSecret)
 	if err != nil {
@@ -97,7 +92,7 @@ func (cli *Client) Close() {
 
 func (cli *Client) SyncInitial() error {
 	t := time.Now().Format(time.RFC3339)
-	events, err := cli.srcCalSrv.Events.List(calendarId).ShowDeleted(false).
+	events, err := cli.svc.Events.List(cli.conf.SrcCalId).ShowDeleted(false).
 		SingleEvents(true).TimeMin(t).Do()
 	if err != nil {
 		return fmt.Errorf("get first token: %s", err)
@@ -119,7 +114,7 @@ func (cli *Client) Sync() error {
 	}
 
 	log.Printf("use token: %s", nextToken)
-	events, err := cli.srcCalSrv.Events.List(calendarId).SyncToken(nextToken).Do()
+	events, err := cli.svc.Events.List(cli.conf.SrcCalId).SyncToken(nextToken).Do()
 	if err != nil {
 		return fmt.Errorf("retrieve next events: %s", err)
 	}
@@ -176,7 +171,7 @@ func (cli *Client) create(srcEvt *calendar.Event) (*string, error) {
 		return nil, nil
 	}
 
-	destEvt, err := cli.destCalSrv.Events.Insert(calendarId, evt).Do()
+	destEvt, err := cli.svc.Events.Insert(cli.conf.DestCalId, evt).Do()
 	if err != nil {
 		return nil, fmt.Errorf("create: %w", err)
 	}
@@ -233,7 +228,7 @@ func (cli *Client) StartWatch() (string, error) {
 		return "", err
 	}
 
-	res, err := cli.srcCalSrv.Events.Watch(calendarId, ch).Do()
+	res, err := cli.svc.Events.Watch(cli.conf.SrcCalId, ch).Do()
 	if err != nil {
 		return "", err
 	}
@@ -269,7 +264,7 @@ func (cli *Client) StopWatch(channelId string, resourceId string) (string, error
 		ResourceId: resourceId,
 		Id:         channelId,
 	}
-	err := cli.srcCalSrv.Channels.Stop(&ch).Do()
+	err := cli.svc.Channels.Stop(&ch).Do()
 	if err != nil {
 		return "", err
 	}
@@ -282,7 +277,7 @@ func (cli *Client) RenewWatch() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	res, err := cli.srcCalSrv.Events.Watch(calendarId, ch).Do()
+	res, err := cli.svc.Events.Watch(cli.conf.SrcCalId, ch).Do()
 	if err != nil {
 		return "", err
 	}
@@ -310,7 +305,7 @@ func (cli *Client) RenewWatch() (string, error) {
 		ResourceId: m["resourceId"].(string),
 		Id:         m["channelId"].(string),
 	}
-	if err := cli.srcCalSrv.Channels.Stop(&stoppingCh).Do(); err != nil {
+	if err := cli.svc.Channels.Stop(&stoppingCh).Do(); err != nil {
 		return "", err
 	}
 	return "", nil

@@ -12,8 +12,11 @@ type Config struct {
 	Project string `yaml:"project"`
 	Rules   []rule `yaml:"rules"`
 
-	SrcTokenFile  string `yaml:"src"`
-	DestTokenFile string `yaml:"dest"`
+	SrcCalId  string `yaml:"src"`
+	DestCalId string `yaml:"dest"`
+
+	SrcTokenFile  string `yaml:"src_token_file,omitempty"`
+	DestTokenFile string `yaml:"dest_token_file,omitempty"`
 }
 
 type rule struct {

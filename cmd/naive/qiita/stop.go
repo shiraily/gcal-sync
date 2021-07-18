@@ -8,7 +8,7 @@ import (
 
 func Stop() {
 	ctx := context.Background()
-	svc := NewCalendarService(ctx, "src_token.json")
+	svc := NewCalendarService(ctx)
 	svc.Channels.Stop(&calendar.Channel{
 		ResourceId: "resource-id",
 		Id:         "channel-id",
