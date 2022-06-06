@@ -171,6 +171,27 @@ func (cli *Client) create(srcEvt *calendar.Event) (*string, error) {
 		return nil, nil
 	}
 
+	events, err := cli.svc.Events.List(cli.conf.DestCalId).TimeMin(evt.Start.DateTime).TimeMax(evt.End.DateTime).Do()
+	if err != nil {
+		return nil, fmt.Errorf("list existing events: %w", err)
+	}
+	existingEvents := events.Items
+	isCovered := false
+	start, _ := time.Parse(gcalTimeFormat, evt.Start.DateTime)
+	end, _ := time.Parse(gcalTimeFormat, evt.End.DateTime)
+	for _, existingEvent := range existingEvents {
+		startExisting, _ := time.Parse(gcalTimeFormat, existingEvent.Start.DateTime)
+		endExisting, _ := time.Parse(gcalTimeFormat, existingEvent.End.DateTime)
+		// evtが既存の予定の時間帯に収まるなら作らない
+		if !start.Before(startExisting) && !end.After(endExisting) {
+			isCovered = true
+			break
+		}
+	}
+	if isCovered {
+		return nil, nil
+	}
+
 	destEvt, err := cli.svc.Events.Insert(cli.conf.DestCalId, evt).Do()
 	if err != nil {
 		return nil, fmt.Errorf("create: %w", err)
