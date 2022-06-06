@@ -191,9 +191,12 @@ func (cli *Client) newEvent(srcEvt *calendar.Event) *calendar.Event {
 
 	start, _ := time.Parse(gcalTimeFormat, srcEvt.Start.DateTime)
 	end, _ := time.Parse(gcalTimeFormat, srcEvt.End.DateTime)
+	// 週末開始か終了なら無視
 	if w := start.Weekday(); w == time.Saturday || w == time.Sunday {
 		return nil
 	} else if w := end.Weekday(); w == time.Saturday || w == time.Sunday {
+		return nil
+	} else if start.Hour() >= 22 {
 		return nil
 	}
 
