@@ -217,7 +217,7 @@ func (cli *Client) newEvent(srcEvt *calendar.Event) *calendar.Event {
 		return nil
 	} else if w := end.Weekday(); w == time.Saturday || w == time.Sunday {
 		return nil
-	} else if start.Hour() >= 22 {
+	} else if (start.Hour() >= 22) || (end.Hour() <= 9) {
 		return nil
 	}
 
