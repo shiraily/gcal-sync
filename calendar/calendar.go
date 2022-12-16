@@ -224,6 +224,9 @@ func (cli *Client) newEvent(srcEvt *calendar.Event) *calendar.Event {
 	matched := false
 	for _, rule := range cli.conf.Rules {
 		if regexp.MustCompile(rule.Match).MatchString(srcEvt.Summary) {
+			if rule.Ignore {
+				return nil
+			}
 			start = add(start, rule.StartOffset)
 			end = add(end, rule.EndOffset)
 			matched = true

@@ -23,6 +23,7 @@ type rule struct {
 	Match       string `yaml:"match"`                  // "クリニック"
 	StartOffset int    `yaml:"start_offset,omitempty"` // "30" means minute
 	EndOffset   int    `yaml:"end_offset,omitempty"`
+	Ignore      bool   `yaml:"ignore,omitempty"`
 }
 
 func GetConfig() *Config {
