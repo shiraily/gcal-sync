@@ -93,7 +93,7 @@ func (cli *Client) Close() {
 func (cli *Client) SyncInitial() error {
 	t := time.Now().Format(time.RFC3339)
 	events, err := cli.svc.Events.List(cli.conf.SrcCalId).ShowDeleted(false).
-		SingleEvents(true).TimeMin(t).Do()
+		SingleEvents(false).TimeMin(t).Do()
 	if err != nil {
 		return fmt.Errorf("get first token: %s", err)
 	}

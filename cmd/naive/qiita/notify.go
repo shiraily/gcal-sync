@@ -38,7 +38,7 @@ func OnNotify(w http.ResponseWriter, r *http.Request) {
 	if len(resourceState) > 0 && resourceState[0] == "sync" {
 		// 初回syncToken取得
 		currentEvents, _ := svc.Events.List(SrcCalId).ShowDeleted(false).
-			SingleEvents(true).TimeMin(time.Now().Format(time.RFC3339)).Do()
+			SingleEvents(false).TimeMin(time.Now().Format(time.RFC3339)).Do()
 		fmt.Printf("syncToken: %s\n", currentEvents.NextSyncToken) // 保存する
 		return
 	}
