@@ -234,9 +234,11 @@ func (cli *Client) newEvent(srcEvt *calendar.Event) *calendar.Event {
 		}
 	}
 	if !matched {
-		// default
-		start = add(start, -defaultOffset)
-		end = add(end, defaultOffset)
+		// Google Meetなどがない場合はデフォルト
+		if srcEvt.ConferenceData.ConferenceSolution == nil {
+			start = add(start, -defaultOffset)
+			end = add(end, defaultOffset)
+		}
 	}
 	return &calendar.Event{
 		Summary: "ブロック",
