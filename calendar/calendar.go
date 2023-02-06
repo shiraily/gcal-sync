@@ -235,7 +235,7 @@ func (cli *Client) newEvent(srcEvt *calendar.Event) *calendar.Event {
 	}
 	if !matched {
 		// Google Meetなどがない場合はデフォルト
-		if srcEvt.ConferenceData.ConferenceSolution == nil {
+		if srcEvt.ConferenceData == nil || srcEvt.ConferenceData.ConferenceSolution == nil {
 			start = add(start, -defaultOffset)
 			end = add(end, defaultOffset)
 		}
